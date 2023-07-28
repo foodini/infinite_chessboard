@@ -131,11 +131,11 @@ public:
 
 class Board {
 public:
-  Square squares[1000][1000];
-  unordered_map<int, set<Pos> > neighbor_sums;
-  set<Pos> one_point_positions;
 
   Board() {
+    one_point_count = 0;
+    fill(best_scores, best_scores+10, 0);
+
     dxdy[0] = Pos(-1, -1);
     dxdy[1] = Pos(-1,  0);
     dxdy[2] = Pos(-1,  1);
@@ -152,11 +152,13 @@ public:
 
   void push(const Pos & pos) {
     one_point_positions.insert(pos);
+    one_point_count++;
     _push(pos, 1);
   }
 
   void pop(const Pos & pos) {
     one_point_positions.erase(pos);
+    one_point_count--;
     _pop(pos);
   }
 
@@ -168,9 +170,7 @@ public:
 
     _add_to_walked_boards();
 
-    best = 1;
     _walk(2);
-    printf("Best: %d\n", best);
   }
 
   void get_bounds(u16 & min_x, u16 & min_y, u16 & max_x, u16 & max_y) {
@@ -186,6 +186,42 @@ public:
         max_y = max(max_y, pos_iter.get_y());
       }
     }
+  }
+
+  void expand(unordered_set<Pos> & expanded, const unordered_set<Pos> & visited) {
+    for(auto pos_iter : visited) {
+      for(s16 dy=-2; dy<=2; dy++) {
+        for(s16 dx=-2; dx<=2; dx++) {
+          expanded.insert(Pos(dx + pos_iter.get_x(), dy + pos_iter.get_y()));
+        }
+      }
+    }
+  }
+
+  void _all(u32 depth) {
+    printf("_all called with depth = %d (%d max)\n", depth, max_depth);
+    unordered_set<Pos> to_traverse;
+    expand(to_traverse, visited_pos_set);
+
+    for(auto pos_iter : to_traverse) {
+      visited_pos_set.clear();
+      if(get_square(pos_iter).val != 1) {
+        push(pos_iter);
+        walk();
+        if(depth < max_depth) {
+          printf("Calling _all with depth = %d (%d max). Comp result: %d\n", depth + 1, max_depth, depth < max_depth); 
+          _all(depth + 1);
+        }
+        pop(pos_iter);
+      }
+    }
+  }
+
+  void all() {
+    Pos center(BOARD_MID, BOARD_MID);
+    push(center);
+    max_depth = 3;
+    _all(2);
   }
 
   void print() {
@@ -226,12 +262,17 @@ public:
 
 private:
   Pos dxdy[8];
-  int best;
+  Square squares[BOARD_SIZE][BOARD_SIZE];
+  unordered_set<Pos> visited_pos_set;
   unordered_set<string> walked_boards;
+  unordered_map<int, set<Pos> > neighbor_sums;
+  set<Pos> one_point_positions;
+  u32 one_point_count;
+  u32 best_scores[10];
+  u32 max_depth;
 
   void _push(const Pos & pos, int val) {
-    //There's no check to make sure you're not overwriting something.
-    //Don't do it. There's no fixing it once you've broken it.
+    visited_pos_set.insert(pos);
     get_square(pos).val = val;
     for(int i=0; i<8; i++) {
       Pos neighbor = pos + dxdy[i];
@@ -278,9 +319,11 @@ private:
 
     for(const Pos & iter : positions) {
       _push(iter, val);
-      if(val > best) {
-        best = val;
-        //printf("New best: %d\n", val);
+      if(val > best_scores[one_point_count]) {
+        best_scores[one_point_count] = val;
+        printf("New best (%d stones): %d\n", one_point_count, val);
+        print();
+        printf("\n");
       }
       _walk(val+1);
       _pop(iter);
@@ -355,13 +398,13 @@ private:
 
     sort(repr_list, repr_list + next_in_repr_list);
 
-    u32 len = snprintf(buf, 100, "%x%x", span_x, span_y);
+    u32 len = snprintf(buf, 100, "%xx%x", span_x, span_y);
     char * cur = buf + len;
     for(s32 i=0; i<next_in_repr_list; i++) {
       cur += snprintf(cur, 100, "|%x", repr_list[i]);
     }
 
-    printf("%s\n", buf);
+    //printf("%s\n", buf);
 
     return string(buf);
   }
@@ -374,36 +417,17 @@ private:
 int main() {
   Board board;
 
-  /*
-  Pos p0(BOARD_MID + 0, BOARD_MID + 0);
-  Pos p1(BOARD_MID + 4, BOARD_MID + 2);
-  Pos p2(BOARD_MID + 6, BOARD_MID + 4);
-  Pos p3(BOARD_MID + 9, BOARD_MID + 2);
-  */
-  Pos p0(BOARD_MID + 0, BOARD_MID + 0);
-  Pos p1(BOARD_MID + 2, BOARD_MID + 1);
-  Pos p2(BOARD_MID + 1, BOARD_MID + 4);
-
-
-  board.push(p0);
-  board.push(p1);
-  board.push(p2);
-
+  //board.all();
+  MARK;
+  board.push(Pos(BOARD_MID + 4,BOARD_MID + 0));
+  MARK;
+  board.push(Pos(BOARD_MID + 0,BOARD_MID + 3));
+  MARK;
+  board.push(Pos(BOARD_MID + 6,BOARD_MID + 2));
+  MARK;
+  board.push(Pos(BOARD_MID + 8,BOARD_MID + 5));
+  MARK;
   board.walk();
+  MARK;
   board.print();
-  board.pop(p0);
-  board.pop(p1);
-  board.pop(p2);
-
-  Pos p3(BOARD_MID + 2, BOARD_MID + 0);
-  Pos p4(BOARD_MID + 0, BOARD_MID + 1);
-  Pos p5(BOARD_MID + 1, BOARD_MID + 4);
-  Pos offset(7,9);
-
-  board.push(p3+offset);
-  board.push(p4+offset);
-  board.push(p5+offset);
-  board.walk();
-  board.print();
-
 }
