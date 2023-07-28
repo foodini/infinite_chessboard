@@ -1,16 +1,22 @@
 #include <stdio.h>
 
 #include <format>
-#include <unordered_map>
 #include <set>
 #include <stdlib.h>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "util.h"
 
+/*
+TODO:
+* unordered_sets should be faster than sets, but a test on walking a single
+  four-square Board showed otherwise. It would be worth trying again when there
+  are larger boards & deeper traverses going on.
+*/
+
 #define MARK do{printf("%d\n", __LINE__); fflush(stdout);} while(0)
-//template<typename T> inline T min(T a, T b) { return a < b ? a : b; }
-//template<typename T> inline T max(T a, T b) { return a > b ? a : b; }
 
 const int BOARD_SIZE = 1000;
 const int BOARD_MID = BOARD_SIZE/2;
@@ -38,6 +44,10 @@ public:
 
   Pos operator+(const Pos & other) const {
     return Pos(x + other.x, y + other.y);
+  }
+  // THIS RETURNS A ROTATED VECTOR!!!!!
+  Pos operator^(const Pos & other) const {
+    return Pos(y - other.y, other.x - x);
   }
   bool operator==(const Pos & other) const {
     return x == other.x && y == other.y;
@@ -71,6 +81,8 @@ private:
   u64 hash_cache;
 };
 
+
+// Provides the hashing function for unordered_set of Pos. 
 namespace std {
   template<>
   struct hash<Pos> {
@@ -121,7 +133,7 @@ class Board {
 public:
   Square squares[1000][1000];
   unordered_map<int, set<Pos> > neighbor_sums;
-  set<Pos> one_point_stones;
+  set<Pos> one_point_positions;
 
   Board() {
     dxdy[0] = Pos(-1, -1);
@@ -139,18 +151,26 @@ public:
   }
 
   void push(const Pos & pos) {
-    one_point_stones.insert(pos);
+    one_point_positions.insert(pos);
     _push(pos, 1);
   }
 
   void pop(const Pos & pos) {
-    one_point_stones.erase(pos);
+    one_point_positions.erase(pos);
     _pop(pos);
   }
 
   void walk() {
+    if(already_walked()) {
+      printf("He's already got one!\n");
+      return;
+    }
+
+    _add_to_walked_boards();
+
     best = 1;
     _walk(2);
+    printf("Best: %d\n", best);
   }
 
   void get_bounds(u16 & min_x, u16 & min_y, u16 & max_x, u16 & max_y) {
@@ -200,49 +220,14 @@ public:
     }
   }
 
-  //TODO: FASTER!!! I should be formatting directly into the returned string.
-  string get_compact_repr() {
-    u32 repr_list[32]; // Not enough compute power in the world to go this big.
-    char buf[1024];
-    u16 next_in_repr_list = 0;
-    u16 min_x = u16_max;
-    u16 max_x = u16_min;
-    u16 min_y = u16_max;
-    u16 max_y = u16_min;
-
-    for(auto one_point_stones_iter : one_point_stones) {
-      u16 x = one_point_stones_iter.get_x();
-      u16 y = one_point_stones_iter.get_y();
-      min_x = min(min_x, x);
-      max_x = max(max_x, x);
-      min_y = min(min_y, y);
-      max_y = max(max_y, y);
-    }
-    u16 span_x = max_x - min_x;
-    u16 span_y = max_y - min_y;
-
-    for(auto one_point_stones_iter : one_point_stones) {
-      u32 x = (u32)(one_point_stones_iter.get_x());
-      u32 y = (u32)(one_point_stones_iter.get_y());
-
-      repr_list[next_in_repr_list] = ((y-min_y)<<16) + (x-min_x);
-      next_in_repr_list++;
-    }
-
-    sort(repr_list, repr_list + next_in_repr_list);
-
-    u32 len = snprintf(buf, 100, "%x%x", span_x, span_y);
-    char * cur = buf + len;
-    for(s32 i=0; i<next_in_repr_list; i++) {
-      cur += snprintf(cur, 100, "|%x", repr_list[i]);
-    }
-
-    return string(buf);
+  string compact_repr() {
+    return _compact_repr(one_point_positions);
   }
 
 private:
   Pos dxdy[8];
   int best;
+  unordered_set<string> walked_boards;
 
   void _push(const Pos & pos, int val) {
     //There's no check to make sure you're not overwriting something.
@@ -295,12 +280,94 @@ private:
       _push(iter, val);
       if(val > best) {
         best = val;
-        printf("\n New best: %d\n", val);
-        print();
+        //printf("New best: %d\n", val);
       }
       _walk(val+1);
       _pop(iter);
     }
+  }
+
+  void _add_to_walked_boards() {
+    set<Pos> set_a;
+    set<Pos> set_b;
+    set<Pos> & cur = set_a;
+    set<Pos> & next = set_b;
+    set<Pos> & swap_tmp = set_a;
+
+    s16 center_val = 0;
+
+    for(Pos pos_iter : one_point_positions) {
+      set_a.insert(pos_iter);
+
+      // This looks weird, but center_pos.x & center_pos.y will be the same,
+      // and will be the max of all x and y values of all positions.
+      if(pos_iter.get_x() > center_val) {
+        center_val = pos_iter.get_x();
+      }
+      if(pos_iter.get_y() > center_val) {
+        center_val = pos_iter.get_y();
+      }
+    }
+    Pos center_pos(center_val, center_val);
+    for(u32 reflection = 0; reflection < 2; reflection++) {
+      for(u32 rotation = 0; rotation < 2; rotation++) {
+        walked_boards.insert(_compact_repr(cur));
+        next.clear();
+        for(Pos pos_iter : cur) {
+          Pos v = pos_iter ^ center_pos;
+          next.insert(center_pos + v);
+        }
+        swap_tmp = next; next = cur; cur = swap_tmp;
+      }
+      walked_boards.insert(_compact_repr(cur));
+      next.clear();
+      for(Pos pos_iter : cur) {
+        next.insert(Pos(pos_iter.get_y(), pos_iter.get_x()));
+      }
+      swap_tmp = next; next = cur; cur = swap_tmp;
+    }
+  }
+
+  //TODO: FASTER!!! I should be formatting directly into the returned string.
+  string _compact_repr(const set<Pos> & squares) {
+    u32 repr_list[32]; // Not enough compute power in the world to go this big.
+    char buf[1024];
+    u16 next_in_repr_list = 0;
+    u16 min_x = u16_max; u16 max_x = u16_min;
+    u16 min_y = u16_max; u16 max_y = u16_min;
+
+    for(auto squares_iter : squares) {
+      u16 x = squares_iter.get_x();
+      u16 y = squares_iter.get_y();
+      min_x = min(min_x, x); max_x = max(max_x, x);
+      min_y = min(min_y, y); max_y = max(max_y, y);
+    }
+    u16 span_x = max_x - min_x;
+    u16 span_y = max_y - min_y;
+
+    for(auto squares_iter : squares) {
+      u32 x = (u32)(squares_iter.get_x());
+      u32 y = (u32)(squares_iter.get_y());
+
+      repr_list[next_in_repr_list] = ((y-min_y)<<16) + (x-min_x);
+      next_in_repr_list++;
+    }
+
+    sort(repr_list, repr_list + next_in_repr_list);
+
+    u32 len = snprintf(buf, 100, "%x%x", span_x, span_y);
+    char * cur = buf + len;
+    for(s32 i=0; i<next_in_repr_list; i++) {
+      cur += snprintf(cur, 100, "|%x", repr_list[i]);
+    }
+
+    printf("%s\n", buf);
+
+    return string(buf);
+  }
+
+  bool already_walked() {
+    return walked_boards.find(compact_repr()) != walked_boards.end();
   }
 };
 
@@ -308,16 +375,35 @@ int main() {
   Board board;
 
   /*
-  board.push(Pos(0,0));
-  board.push(Pos(2,2));
+  Pos p0(BOARD_MID + 0, BOARD_MID + 0);
+  Pos p1(BOARD_MID + 4, BOARD_MID + 2);
+  Pos p2(BOARD_MID + 6, BOARD_MID + 4);
+  Pos p3(BOARD_MID + 9, BOARD_MID + 2);
   */
-  board.push(Pos(BOARD_MID + 0, BOARD_MID + 0));
-  board.push(Pos(BOARD_MID + 4, BOARD_MID + 2));
-  board.push(Pos(BOARD_MID + 6, BOARD_MID + 4));
-  board.push(Pos(BOARD_MID + 9, BOARD_MID + 2));
+  Pos p0(BOARD_MID + 0, BOARD_MID + 0);
+  Pos p1(BOARD_MID + 2, BOARD_MID + 1);
+  Pos p2(BOARD_MID + 1, BOARD_MID + 4);
 
-  board.print();
+
+  board.push(p0);
+  board.push(p1);
+  board.push(p2);
 
   board.walk();
+  board.print();
+  board.pop(p0);
+  board.pop(p1);
+  board.pop(p2);
+
+  Pos p3(BOARD_MID + 2, BOARD_MID + 0);
+  Pos p4(BOARD_MID + 0, BOARD_MID + 1);
+  Pos p5(BOARD_MID + 1, BOARD_MID + 4);
+  Pos offset(7,9);
+
+  board.push(p3+offset);
+  board.push(p4+offset);
+  board.push(p5+offset);
+  board.walk();
+  board.print();
 
 }
