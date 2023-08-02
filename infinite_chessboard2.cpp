@@ -1,6 +1,8 @@
 #include <stdio.h>
 
 #include <algorithm>
+#include <string>
+#include <unordered_set>
 
 #include "util.h"
 
@@ -21,7 +23,10 @@
     this->list_name##_next->list_name##_prev = this->list_name##_prev; \
     this->list_name##_prev = this->list_name##_next = NULL; \
   }
-
+#define ITERATE(list_name, iterator_name) \
+  for(Square * iterator_name = list_name##_list.list_name##_next; \
+      iterator_name->list_name##_next != NULL; \
+      iterator_name = iterator_name->list_name##_next)
 class Square {
 private:
   u16 x;
@@ -79,11 +84,14 @@ public:
 
 class Board {
 private:
-  static const u32 board_size = 1000;
+  static const u32 board_size = 15; // MUST BE ODD (so refletion works)
   static const u32 board_mid = board_size/2;
   static const u32 max_neighbor_sums = 100000; //Paying memory for safety/speed.
+  static const u16 max_depth = 4;
+  static const u32 buf_len = 16*(max_depth + 1); //A generous estimate.
 
   Square squares[board_size][board_size];
+  char compact_repr_buffs[8][buf_len];
 
   // It's highly unusual to keep linked lists this way, with guards at either
   // end of the list. However, I'm shooting for a fast run here, so I want to
@@ -107,8 +115,7 @@ private:
     min_x = u16_max, max_x = u16_min;
     min_y = u16_max, max_y = u16_min;
 
-    for(Square * iter = visited_list.visited_next;
-        iter->visited_next != NULL; iter = iter->visited_next) {
+    ITERATE(visited, iter) {
       min_x = std::min(min_x, iter->x);
       max_x = std::max(max_x, iter->x);
       min_y = std::min(min_y, iter->y);
@@ -153,6 +160,95 @@ private:
         if(new_val > 0) {
           neighbor_sums_list[new_val].neighbor_sums_insert(neighbor_square);
         }
+      }
+    }
+  }
+
+  inline u32 compact(u16 x, u16 y, u16 min_x, u16 min_y) {
+    return ((y-min_y)<<16) + (x-min_x);
+  }
+
+  inline void u32_to_buf(
+      char buf[], u32 repr_list[], u32 count, u16 span_x, u16 span_y) {
+    std::sort(repr_list, repr_list + count);
+
+    //TODO: faster to format straight into the output string?
+    u32 len = snprintf(buf, buf_len, "%xx%x", span_x, span_y);
+    for(u32 i=0; i<count; i++) {
+      // I'm not counting total 
+      len += snprintf(buf+len, buf_len-len, "|%x", repr_list[i]);
+    }
+  }
+
+  void generate_string_reprs(bool do_seven = true) {
+    u32 repr_list[8][max_depth];
+    u32 repr_list_next=0;
+    u16 min_x, min_y, max_x, max_y;
+
+    get_extents(min_x, min_y, max_x, max_y);
+    u16 span_x = 1 + max_x - min_x;
+    u16 span_y = 1 + max_y - min_y;
+    ITERATE(one_point_squares, iter) {
+      u32 x = (u32)(iter->x);
+      u32 y = (u32)(iter->y);
+
+      repr_list[0][repr_list_next++] = compact(x, y, min_x, min_y);
+    }
+
+    u32_to_buf(
+      compact_repr_buffs[0], repr_list[0], repr_list_next, span_x, span_y);
+
+    //TODO: If the first one is already in the cache, quit early.
+
+    //As the saying goes, the algorithm to do this is very nasty. In fact,
+    //you might want to mug someone with it.
+
+    if(not do_seven) {
+      return;
+    }
+
+    u32 repr_list_next = 0;
+    u16 min_x_inv = board_size - min_x - 1;
+    u16 min_y_inv = board_size - min_y - 1;
+    u16 max_x_inv = board_size - max_x - 1;
+    u16 max_y_inv = board_size - max_y - 1;
+    ITERATE(one_point_squares_list, iter) {
+      x = iter->x;
+      y = iter->y;
+      //We've already done [y][x], so we output nothing to repr_list[0].
+      //Let's reflect about y=board_mid:
+      y = board_size - y - 1;
+      repr_list[1][repr_list_next] = compact(x, y, x_min, max_y_inv);
+      //Reflect about x=board_mid axis:
+      x = board_size - x - 1;
+      repr_list[2][repr_list_next] = compact(x, y, max_x_inv, max_y_inv);
+      //Reflect about y=board_mid again:
+      y = board_size - y - 1;
+      repr_list[3][repr_list_next] = compact(x, y, max_x_inv, min_y);
+
+      //Now we do a reflection about x=y:
+      std::swap(x, y);
+      repr_list[4][repr_list_next] = compact(x, y, max_y_inv, min_x);
+
+      //Reflect about x=board_mid (continuing clockwise.):
+      x = board_size - x - 1;
+      repr_list[5][repr_list_next] = compact(x, y, min_y, min_x);
+      //Reflect about y=board_mid
+      y = board_size - y - 1;
+      repr_list[6][repr_list_next] = compact(x, y, min_y, max_x_inv);
+      //Reflect about x=board_mid
+      x = board_size - x - 1;
+      repr_list[6][repr_list_next] = compact(x, y, max_y_inv, max_x_inv);
+
+      repr_list_next++;
+    }
+    for(u32 i=1; i<8; i++) {
+      if(i<4){
+        u32_to_buf(
+          compact_repr_buffs[1], repr_list[1], repr_list_next, span_x, span_y);
+      } else {
+        u32_to_buf(
+          compact_repr_buffs[1], repr_list[1], repr_list_next, span_y, span_x);
       }
     }
   }
@@ -203,7 +299,7 @@ public:
     _pop(x, y);
   }
 
-  void print(bool full_debug = false) {
+  void print(bool print_first_repr=true, bool print_all_reprs=false) {
     u16 min_x, max_x, min_y, max_y;
 
     get_extents(min_x, min_y, max_x, max_y);
@@ -214,22 +310,24 @@ public:
       }
       printf("|\n");
     }
+    if(print_first_repr or print_all_reprs) {
+      generate_string_reprs(true);
+      if(print_all_reprs) {
+        for(u32 i=0; i<8; i++) {
+          printf("%s\n", compact_repr_buffs[i]);
+        }
+      } else {
+        printf("%s\n", compact_repr_buffs[0]);
+      }
+    }
   }
 };
 
 int main() {
   Board * board = new Board;
 
-  board->push(500,500);
-  board->push(501,501);
-  board->push(500,501);
-  board->print();
-  printf("\n");
-  board->push(501,500);
-
-  board->print();
-  printf("\n");
-
-  board->pop(501, 500);
+  board->push(1,10);
+  board->push(1, 9);
+  board->push(2, 8);
   board->print();
 }
