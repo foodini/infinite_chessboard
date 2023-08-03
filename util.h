@@ -48,5 +48,7 @@ void print_x128(u128 u, char end='\0');
 void print_s128(s128 u, char end='\0');
 double now();
 bool progress_timer();
+void move_cursor_to(s16 x, s16 y);
+void clear_screen();
 
 #endif // __UTIL_H

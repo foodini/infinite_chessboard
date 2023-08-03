@@ -9,7 +9,7 @@
 #define MARK do{printf("%d\n", __LINE__); fflush(stdout);}while(0)
 
 #define DEFINE_INSERT(list_name) \
-  void list_name ## _insert(Square * node) { \
+  void list_name##_insert(Square * node) { \
     if(node->list_name##_next != NULL) return; /*DON'T RE-INSERT!!!*/ \
     node->list_name##_next = this->list_name##_next; \
     node->list_name##_prev = this; \
@@ -84,7 +84,7 @@ public:
 
 class Board {
 private:
-  static const u32 board_size = 15; // MUST BE ODD (so refletion works)
+  static const u32 board_size = 1001; // MUST BE ODD (so refletion works)
   static const u32 board_mid = board_size/2;
   static const u32 max_neighbor_sums = 100000; //Paying memory for safety/speed.
   static const u16 max_depth = 4;
@@ -92,6 +92,7 @@ private:
 
   Square squares[board_size][board_size];
   char compact_repr_buffs[8][buf_len];
+  std::unordered_set<std::string> walked_boards;
 
   // It's highly unusual to keep linked lists this way, with guards at either
   // end of the list. However, I'm shooting for a fast run here, so I want to
@@ -180,7 +181,10 @@ private:
     }
   }
 
-  void generate_string_reprs(bool do_seven = true) {
+  //Returns true if first string is already in walked_board_set.
+  //Setting do_all to true forces the generation of all strings. The
+  //values of strings1-7 are garbage if do_all==false and retval==false.
+  bool check_and_update_walked_set(bool do_all=false, bool skip_update=false) {
     u32 repr_list[8][max_depth];
     u32 repr_list_next=0;
     u16 min_x, min_y, max_x, max_y;
@@ -200,25 +204,57 @@ private:
 
     //TODO: If the first one is already in the cache, quit early.
 
-    //As the saying goes, the algorithm to do this is very nasty. In fact,
-    //you might want to mug someone with it.
-
-    if(not do_seven) {
-      return;
+    std::string str_of_buf(compact_repr_buffs[0]);
+    if(!do_all && walked_boards.find(str_of_buf) != walked_boards.end()) {
+      return true;
+    }
+    if(!skip_update) {
+      walked_boards.insert(str_of_buf);
     }
 
-    u32 repr_list_next = 0;
-    u16 min_x_inv = board_size - min_x - 1;
-    u16 min_y_inv = board_size - min_y - 1;
+    /*
+    As the saying goes, the algorithm to do this is very nasty. In fact,
+    you might want to mug someone with it. Let's say that we start with 
+    the three stones labeled 0 on a 15x15 board:
+
+      0123456789abcde
+    0 +++++++++++++++
+    1 ++++66+++77++++
+    2 ++++++6+7++++++
+    3 +++++++++++++++
+    4 +1+++++++++++2+
+    5 +1+++++++++++2+
+    6 ++1+++++++++2++
+    7 +++++++++++++++
+    8 ++0+++++++++3++
+    9 +0+++++++++++3+
+    a +0+++++++++++3+
+    b +++++++++++++++
+    c ++++++5+4++++++
+    d ++++55+++44++++
+
+    min_x=1, min_y=8, max_x=2, max_y=10.
+
+    As we go through the 8 permutations of these three stones, the smallest
+    x in the triple will sometimes be min_x (rotations 0 and 1), but it may
+    also be min_y (like in rotations 4 and 7), or the reflections of max_x
+    or max_y. In rotations 2 and 3, the min x we need for computing offsets
+    in compact() is 12, which is the reflection (or "inverse") of max_x.
+
+    Maybe there's a way to pack this into a loop inside of ITERATE, but I
+    didn't see it.
+    */
+
+    repr_list_next = 0;
     u16 max_x_inv = board_size - max_x - 1;
     u16 max_y_inv = board_size - max_y - 1;
-    ITERATE(one_point_squares_list, iter) {
-      x = iter->x;
-      y = iter->y;
+    ITERATE(one_point_squares, iter) {
+      u16 x = iter->x;
+      u16 y = iter->y;
       //We've already done [y][x], so we output nothing to repr_list[0].
       //Let's reflect about y=board_mid:
       y = board_size - y - 1;
-      repr_list[1][repr_list_next] = compact(x, y, x_min, max_y_inv);
+      repr_list[1][repr_list_next] = compact(x, y, min_x, max_y_inv);
       //Reflect about x=board_mid axis:
       x = board_size - x - 1;
       repr_list[2][repr_list_next] = compact(x, y, max_x_inv, max_y_inv);
@@ -228,28 +264,53 @@ private:
 
       //Now we do a reflection about x=y:
       std::swap(x, y);
-      repr_list[4][repr_list_next] = compact(x, y, max_y_inv, min_x);
+      repr_list[4][repr_list_next] = compact(x, y, min_y, max_x_inv);
 
       //Reflect about x=board_mid (continuing clockwise.):
       x = board_size - x - 1;
-      repr_list[5][repr_list_next] = compact(x, y, min_y, min_x);
+      repr_list[5][repr_list_next] = compact(x, y, max_y_inv, max_x_inv);
       //Reflect about y=board_mid
       y = board_size - y - 1;
-      repr_list[6][repr_list_next] = compact(x, y, min_y, max_x_inv);
+      repr_list[6][repr_list_next] = compact(x, y, max_y_inv, min_x);
       //Reflect about x=board_mid
       x = board_size - x - 1;
-      repr_list[6][repr_list_next] = compact(x, y, max_y_inv, max_x_inv);
+      repr_list[7][repr_list_next] = compact(x, y, min_y, min_x);
 
       repr_list_next++;
     }
     for(u32 i=1; i<8; i++) {
-      if(i<4){
+      //TODO: is it faster to do two i loops w/o the if, or is the optimizer
+      //      getting it?
+      if(i<4) {
         u32_to_buf(
-          compact_repr_buffs[1], repr_list[1], repr_list_next, span_x, span_y);
+          compact_repr_buffs[i], repr_list[i], repr_list_next, span_x, span_y);
       } else {
         u32_to_buf(
-          compact_repr_buffs[1], repr_list[1], repr_list_next, span_y, span_x);
+          compact_repr_buffs[i], repr_list[i], repr_list_next, span_y, span_x);
       }
+
+      if(!skip_update) {
+        walked_boards.insert(std::string(compact_repr_buffs[i]));
+      }
+    }
+
+    return false;
+  }
+
+  void _walk(u16 val) {
+    if(check_and_update_walked_set()) {
+      printf("He's already got one!\n");
+      return;
+    }
+
+    // I hate doing this copy. I'd love to find a way to skip it.
+    std::vector<Square *> neighbor_sums_equal_to_val;
+    ITERATE(one_point_squares, iter) {
+      neighbor_sums_equal_to_val.push_back(iter);
+    }
+
+    for(Square * square : neighbor_sums_equal_to_val) {
+      
     }
   }
 
@@ -274,6 +335,10 @@ public:
       neighbor_sums_list[i].neighbor_sums_next = &(neighbor_sums_ends[i]);
       neighbor_sums_ends[i].neighbor_sums_prev = &(neighbor_sums_list[i]);
     }
+  }
+
+  void walk() {
+    _walk(2);
   }
 
   void push(u16 x, u16 y) {
@@ -311,7 +376,7 @@ public:
       printf("|\n");
     }
     if(print_first_repr or print_all_reprs) {
-      generate_string_reprs(true);
+      check_and_update_walked_set(true, true);
       if(print_all_reprs) {
         for(u32 i=0; i<8; i++) {
           printf("%s\n", compact_repr_buffs[i]);
@@ -319,6 +384,13 @@ public:
       } else {
         printf("%s\n", compact_repr_buffs[0]);
       }
+    }
+  }
+
+  void print_string_reprs() {
+    check_and_update_walked_set(true, true);
+    for(u32 i=0; i<8; i++) {
+      printf("%d: %s\n", i, compact_repr_buffs[i]);
     }
   }
 };
@@ -329,5 +401,5 @@ int main() {
   board->push(1,10);
   board->push(1, 9);
   board->push(2, 8);
-  board->print();
+  board->walk();
 }

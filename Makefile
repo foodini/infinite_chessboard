@@ -9,7 +9,7 @@ clean:
 	rm util.o infinite_chessboard.o infinite_chessboard infinite_chessboard2
 
 util.o: util.h util.cpp
-	g++ -c -o util.o util.cpp
+	g++ -c -o util.o -std=c++20 util.cpp
 
 tmp: tmp.cpp util.o
   g++ -o tmp -std=c++20 tmp.cpp util.o

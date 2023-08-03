@@ -69,3 +69,31 @@ bool progress_timer() {
   }
   return false;
 }
+
+#ifdef __APPLE__
+#include <sys/ioctl.h>
+#include <unistd.h>
+void get_terminal_dimensions(u32 & x, u32 & y) {
+  struct winsize w;
+  ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
+  x = w.ws_col;
+  y = w.ws_row;
+}
+
+void move_cursor_to(s16 x, s16 y) {
+  u32 width, height;
+
+  if(x < 0 || y < 0)
+    get_terminal_dimensions(width, height);
+  if(x < 0)
+    x = width + x;
+  if(y < 0)
+    y = height + y;
+
+  printf("\x1b[%d;%df", y, x);
+}
+
+void clear_screen() {
+  printf("\x1b[2J");
+}
+#endif
