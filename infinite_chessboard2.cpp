@@ -27,6 +27,10 @@
   for(Square * iterator_name = list_name##_list.list_name##_next; \
       iterator_name->list_name##_next != NULL; \
       iterator_name = iterator_name->list_name##_next)
+#define ITERATE_INDEX(list_name, index, iterator_name) \
+  for(Square * iterator_name = list_name##_list[index].list_name##_next; \
+      iterator_name->list_name##_next != NULL; \
+      iterator_name = iterator_name->list_name##_next)
 class Square {
 private:
   u16 x;
@@ -86,13 +90,14 @@ class Board {
 private:
   static const u32 board_size = 1001; // MUST BE ODD (so refletion works)
   static const u32 board_mid = board_size/2;
-  static const u32 max_neighbor_sums = 100000; //Paying memory for safety/speed.
+  static const u32 max_neighbor_sums = 2000; //Paying memory for safety/speed.
   static const u16 max_depth = 4;
   static const u32 buf_len = 16*(max_depth + 1); //A generous estimate.
 
   Square squares[board_size][board_size];
   char compact_repr_buffs[8][buf_len];
   std::unordered_set<std::string> walked_boards;
+  u16 best_scores[max_depth + 1];
 
   // It's highly unusual to keep linked lists this way, with guards at either
   // end of the list. However, I'm shooting for a fast run here, so I want to
@@ -125,6 +130,7 @@ private:
   }
 
   void _push(u16 x, u16 y, u32 val) {
+    //printf("_push(x=%d, y=%d, val=%d)\n", x, y, val);
     Square * square = &squares[y][x];
     visited_list.visited_insert(square);
     square->val = val;
@@ -137,9 +143,9 @@ private:
         u32 new_sum = old_sum + val;
         neighbor_square->neighbor_sum = new_sum;
         if(old_sum > 0) {
-          square->neighbor_sums_erase();
+          neighbor_square->neighbor_sums_erase();
         }
-        neighbor_sums_list[new_sum].neighbor_sums_insert(square);
+        neighbor_sums_list[new_sum].neighbor_sums_insert(neighbor_square);
       }
     }
   }
@@ -298,19 +304,25 @@ private:
   }
 
   void _walk(u16 val) {
-    if(check_and_update_walked_set()) {
-      printf("He's already got one!\n");
-      return;
-    }
-
     // I hate doing this copy. I'd love to find a way to skip it.
     std::vector<Square *> neighbor_sums_equal_to_val;
-    ITERATE(one_point_squares, iter) {
+    //printf("creating list copy for val=%d: ", val);
+    ITERATE_INDEX(neighbor_sums, val, iter) {
       neighbor_sums_equal_to_val.push_back(iter);
+      //printf("<%d,%d>", iter->x, iter->y);
     }
+    //printf("\n");
 
     for(Square * square : neighbor_sums_equal_to_val) {
-      
+      _push(square->x, square->y, val);
+      if(val > best_scores[one_point_count]) {
+        best_scores[one_point_count] = val;
+        printf("New best (%d stones): %d\n", one_point_count, val);
+        print();
+        printf("\n");
+      }
+      _walk(val+1);
+      _pop(square->x, square->y);
     }
   }
 
@@ -324,6 +336,7 @@ public:
         squares[y][x].y = y;
       }
     }
+    std::fill(best_scores, best_scores + max_depth + 1, 0);
 
     visited_list.visited_next = &(visited_end);
     visited_end.visited_prev = &(visited_list);
@@ -364,11 +377,18 @@ public:
     _pop(x, y);
   }
 
-  void print(bool print_first_repr=true, bool print_all_reprs=false) {
+  void print(bool print_first_repr=true, bool print_all_reprs=false,
+             bool print_neighbor_sum_lists=false) {
     u16 min_x, max_x, min_y, max_y;
 
     get_extents(min_x, min_y, max_x, max_y);
+    printf("    y\\x|");
+    for(u16 x=min_x-1; x<=max_x+1; x++) {
+      printf("%7d|", x);
+    }
+    printf("\n");
     for(u16 y=min_y-1; y<=max_y+1; y++) {
+      printf("%7d", y);
       for(u16 x=min_x-1; x<=max_x+1; x++) {
         printf("|");
         squares[y][x].print();
@@ -385,6 +405,17 @@ public:
         printf("%s\n", compact_repr_buffs[0]);
       }
     }
+    if(print_neighbor_sum_lists) {
+      for(u32 i=0; i<max_neighbor_sums; i++) {
+        if(neighbor_sums_list[i].neighbor_sums_next != &neighbor_sums_ends[i]) {
+          printf("%d: ", i);
+          ITERATE_INDEX(neighbor_sums, i, iter) {
+            printf(" <%d,%d>", iter->x, iter->y);
+          }
+          printf("\n");
+        }
+      }
+    }
   }
 
   void print_string_reprs() {
@@ -398,8 +429,10 @@ public:
 int main() {
   Board * board = new Board;
 
-  board->push(1,10);
-  board->push(1, 9);
-  board->push(2, 8);
+  board->push(100, 100);
+  board->push(104, 102);
+  board->push(106, 104);
+  board->push(109, 102);
+  board->print(true, true, true);
   board->walk();
 }
