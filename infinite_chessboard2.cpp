@@ -12,11 +12,11 @@
 
 /*
 KNOWN:
-Stone Count | Best Score | Num Boards
-          2 |         16 |
-          3 |         28 |
-          4 |         38 |
-          5 |         49 |
+Stone Count | Best Score | Num Boards | Runtime
+          2 |         16 | 5          |
+          3 |         28 | 113        |
+          4 |         38 | 11284      |
+          5 |         49 |            | 13h06m34s
           6 |         60 |
 */
 
@@ -119,7 +119,7 @@ private:
   std::unordered_set<std::string> walked_boards;
   u16 best_scores[max_depth + 1];
   std::vector<std::string> best_solutions;
-  u64 total_board_counts[9] = {0, 0, 5, 113, 11284, 0, 0, 0, 0};
+  u64 total_board_counts[9] = {0, 0, 5, 113, 11284, 940000, 0, 0, 0};
   u64 checked_board_counts[max_depth + 1];
 
   // It's highly unusual to keep linked lists this way, with guards at either
@@ -441,7 +441,7 @@ public:
     push(board_mid, board_mid);
     for(u16 dy=0; dy<=2; dy++) {
       for(u16 dx=0; dx<=2; dx++) {
-        if(dy>0 && dx>0) {
+        if(dy>0 || dx>0) {
           push(board_mid + dx, board_mid + dy);
           _all(2);
           pop(board_mid + dx, board_mid + dy);
@@ -467,7 +467,7 @@ public:
   void _all(u32 depth) {
     //Running at max_depth = 4 was 1m48s with checking and 2m18s without.
     //Need to test it for max_depth = 5
-    if(/*depth >= 4 or */not check_and_update_walked_set()) {
+    if(/*depth > 4 or*/ not check_and_update_walked_set()) {
       walk();
       checked_board_counts[depth]++;
       if(depth < max_depth) {
@@ -560,6 +560,7 @@ public:
     for(u32 i=0; i<8; i++) {
       printf("%d: %s\n", i, packed_repr_buffs[i]);
     }
+    fflush(stdout);
   }
 };
 
