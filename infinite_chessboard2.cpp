@@ -637,9 +637,104 @@ public:
   }
 };
 
-int main() {
+class ArgParse {
+private:
+  void usage(s32 exit_val) {
+    fflush(stderr);
+    printf("usage: infchess max_depth -c -a=remote_addr -p=port_number|\n");
+    printf("       infchess max_depth -s -p=port_number\n");
+    printf("       infchess max_depth\n\n");
+    printf("The first form creates a worker client and connects to the\n");
+    printf("server at the remote_addr and port_numer given\n\n");
+    printf("The second form creates an orchestrator process to which\n");
+    printf("the clients will connect.\n");
+    printf("The final form creates a local-only process\n");
+    exit(exit_val);
+  }
+public:
+  ArgParse(s32 argc, char * argv[]) :
+      m_client(false),
+      m_server(false),
+      m_standalone(true),
+      m_port(0),
+      m_max_depth(0),
+      m_remote_address(NULL)
+  {
+    if(argc < 2) {
+      usage(1);
+    }
+
+    m_max_depth = atoi(argv[1]);
+    if(m_max_depth == 0) {
+      fprintf(stderr, "Unable to parse max_depth\n");
+      usage(1);
+    }
+    for(s32 i=2; i<argc; i++) {
+      if(argv[i][0] != '-') {
+        usage(1);
+      }
+      switch(argv[i][1]) {
+        case 'h':
+        case '?':
+          usage(0);
+          break;
+        case 's':
+          if(m_client) {
+            fprintf(stderr, "-s and -c are mutually exclusive\n");
+            usage(1);
+          }
+          m_server = true;
+          m_standalone = false;
+          break;
+        case 'c':
+          if(m_server) {
+            fprintf(stderr, "-s and -c are mutually exclusive\n");
+            usage(1);
+          }
+          m_client = true;
+          m_standalone = false;
+          break;
+        case 'a':
+          if(argv[i][2] != '=') {
+            usage(1);
+          }
+          m_remote_address = &argv[i][3];
+          break;
+        case 'p':
+          if(argv[i][2] != '=') {
+            usage(1);
+          }
+          m_port=atoi(&argv[i][3]);
+          break;
+      }
+    }
+
+    if((m_server || m_client) && m_port == 0) {
+      fprintf(stderr, "Port num required when starting a client or server.\n");
+      usage(1);
+    }
+
+    if(m_client && m_remote_address == NULL) {
+      fprintf(stderr, "Remote IP is required when starting a client.\n");
+      usage(1);
+    }
+  }
+
+  bool m_client;
+  bool m_server;
+  bool m_standalone;
+
+  u16 m_max_depth;
+
+  u16 m_port;
+  char * m_remote_address;
+};
+
+int main(s32 argc, char * argv[]) {
   Board * board = new Board();
 
+  ArgParse args(argc, argv);
+  exit(0);
   /*
   board->push(100,102);
   board->push(104,100);
