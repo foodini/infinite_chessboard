@@ -2,9 +2,10 @@
 #include <stdlib.h>
 
 #include <algorithm>
+#include <list>
 #include <string>
 #include <thread>
-#include <unordered_set>
+#include <set>
 
 #include "util.h"
 
@@ -14,16 +15,15 @@
 KNOWN:
 Stone Count | Best Score | Num Boards | Runtime
           2 |         16 | 5          |
-          3 |         28 | 113        |
-          4 |         38 | 11284      |
-          5 |         49 |            | 13h06m34s
+          3 |         28 | 128        |
+          4 |         38 | 7767       |     1m 02s
+          5 |         49 | 501823     | 5h 32m 48s
           6 |         60 |
 */
 
 #define DEFINE_INSERT(list_name) \
   void list_name##_insert(Square * square) { \
-    if(square->list_name##_valid == true) return; /*DON'T RE-INSERT!!!*/ \
-    square->list_name##_valid = true; \
+    if(square->list_name##_next != NULL) return; /*DON'T RE-INSERT!!!*/ \
     square->list_name##_next = this->list_name##_next; \
     square->list_name##_prev = this; \
     square->list_name##_next->list_name##_prev = square; \
@@ -31,16 +31,11 @@ Stone Count | Best Score | Num Boards | Runtime
   }
 #define DEFINE_ERASE(list_name) \
   void list_name##_erase() { \
-    if(this->list_name##_valid == false) return; \
-    this->list_name##_valid = false; \
+    if(this->list_name##_next == NULL) return; \
     this->list_name##_prev->list_name##_next = this->list_name##_next; \
     this->list_name##_next->list_name##_prev = this->list_name##_prev; \
     this->list_name##_prev = this->list_name##_next = NULL; \
   }
-#define ITERATE_INDEX(list_name, index, iterator_name) \
-  for(Square * iterator_name = list_name##_list[index].list_name##_next; \
-      iterator_name->list_name##_next != NULL; \
-      iterator_name = iterator_name->list_name##_next)
 class Square {
 private:
   u16 x;
@@ -51,13 +46,10 @@ private:
 
   Square * neighbor_sums_next;
   Square * neighbor_sums_prev;
-  bool neighbor_sums_valid; 
   Square * one_point_squares_next;
   Square * one_point_squares_prev;
-  bool one_point_squares_valid; 
   Square * visited_next;
   Square * visited_prev;
-  bool visited_valid; 
 
   DEFINE_INSERT(one_point_squares);
   DEFINE_ERASE(one_point_squares);
@@ -74,10 +66,7 @@ public:
       neighbor_sums_next(NULL),
       neighbor_sums_prev(NULL),
       one_point_squares_prev(NULL),
-      one_point_squares_next(NULL),
-      neighbor_sums_valid(false),
-      one_point_squares_valid(false),
-      visited_valid(false)
+      one_point_squares_next(NULL)
   {
   }
 
@@ -90,8 +79,11 @@ public:
       }
     } else {
       if(val == 1) {
-        printf("\033[31;4m");
+        printf("\033[31m");
       }
+    }
+    if(visited_next != NULL ) {
+      printf("\033[4m");
     }
     printf("%3d,%3d", val, neighbor_sum);
     if(val <= 1)
@@ -105,21 +97,25 @@ public:
   for(Square * iterator_name = list_name##_list.list_name##_next; \
       iterator_name->list_name##_next != NULL; \
       iterator_name = iterator_name->list_name##_next)
+#define ITERATE_INDEX(list_name, index, iterator_name) \
+  for(Square * iterator_name = list_name##_list[index].list_name##_next; \
+      iterator_name->list_name##_next != NULL; \
+      iterator_name = iterator_name->list_name##_next)
 
 class Board {
 private:
   static const u32 board_size = 1001; // MUST BE ODD (so refletion works)
   static const u32 board_mid = board_size/2;
   static const u32 max_neighbor_sums = 2000; //Paying memory for safety/speed.
-  static const u16 max_depth = 5;
+  static const u16 max_depth = 4;
   static const u32 buf_len = 16*(max_depth + 1); //A generous estimate.
 
   Square squares[board_size][board_size];
   char packed_repr_buffs[8][buf_len];
-  std::unordered_set<std::string> walked_boards;
+  std::set<std::string> walked_boards;
   u16 best_scores[max_depth + 1];
   std::vector<std::string> best_solutions;
-  u64 total_board_counts[9] = {0, 0, 5, 113, 11284, 940000, 0, 0, 0};
+  u64 total_board_counts[9] = {0, 0, 5, 128, 7767, 501823, 0, 0, 0};
   u64 checked_board_counts[max_depth + 1];
 
   // It's highly unusual to keep linked lists this way, with guards at either
@@ -135,12 +131,14 @@ private:
 
   u32 one_point_count;
 
+  double start_time;
+
   s16 dydx[8][2] = {
     {-1,-1}, {-1, 0}, {-1, 1},
     { 0,-1},          { 0, 1},
     { 1,-1}, { 1, 0}, { 1, 1}};
 
-  void get_extents(u16 & min_x, u16 & min_y, u16 & max_x, u16 & max_y) {
+  void get_visited_extents(u16 & min_x, u16 & min_y, u16 & max_x, u16 & max_y) {
     min_x = u16_max, max_x = u16_min;
     min_y = u16_max, max_y = u16_min;
 
@@ -152,8 +150,19 @@ private:
     }
   }
 
+  void get_one_point_extents(u16 & min_x, u16 & min_y, u16 & max_x, u16 & max_y) {
+    min_x = u16_max, max_x = u16_min;
+    min_y = u16_max, max_y = u16_min;
+
+    ITERATE(one_point_squares, iter) {
+      min_x = std::min(min_x, iter->x);
+      max_x = std::max(max_x, iter->x);
+      min_y = std::min(min_y, iter->y);
+      max_y = std::max(max_y, iter->y);
+    }
+  }
+
   void _push(u16 x, u16 y, u32 val) {
-    //printf("_push(x=%d, y=%d, val=%d)\n", x, y, val);
     Square * square = &squares[y][x];
     visited_list.visited_insert(square);
     square->val = val;
@@ -225,7 +234,7 @@ private:
     u32 repr_list_next=0;
     u16 min_x, min_y, max_x, max_y;
 
-    get_extents(min_x, min_y, max_x, max_y);
+    get_one_point_extents(min_x, min_y, max_x, max_y);
     u16 span_x = 1 + max_x - min_x;
     u16 span_y = 1 + max_y - min_y;
     ITERATE(one_point_squares, iter) {
@@ -334,15 +343,27 @@ private:
   }
 
   void _walk(u16 val) {
+    // The order that we visit squares tends to be around the one-pointers first,
+    // then moving outward. The density of possible paths to trace is considerably
+    // higher near the one-pointers than around the perimeter. If I create this
+    // copy in the same order that the original is created, the rate at which
+    // computation is done will either accelerate or decelerate, depending on the
+    // order. This makes eta estimation very difficult.
+    //
+    // It's still terrible, but it's an improvement.
+    bool flipflop = true;
     // I hate doing this copy. I'd love to find a way to skip it.
-    // TODO: replace with an iterator macro.
     std::vector<Square *> neighbor_sums_equal_to_val;
     ITERATE_INDEX(neighbor_sums, val, iter) {
-      neighbor_sums_equal_to_val.push_back(iter);
+      if(flipflop) {
+        neighbor_sums_equal_to_val.push_back(iter);
+      } else {
+        //neighbor_sums_equal_to_val.push_front(iter);
+      }
+      //flipflop = ! flipflop;
     }
 
-    for(Square * square : neighbor_sums_equal_to_val) {
-      _push(square->x, square->y, val);
+    if(neighbor_sums_equal_to_val.size() > 0) {
       if(val > best_scores[one_point_count]) {
         best_scores[one_point_count] = val;
         printf("New best (%d stones): %d\n", one_point_count, val);
@@ -350,18 +371,33 @@ private:
         best_solutions[one_point_count] = packed_repr_buffs[0];
         printf("\n");
       }
-      _walk(val+1);
-      _pop(square->x, square->y);
+      for(Square * square : neighbor_sums_equal_to_val) {
+        _push(square->x, square->y, val);
+        _walk(val+1);
+        _pop(square->x, square->y);
+      }
     }
   }
 
   void refresh_visited_list() {
-    ITERATE(visited, square) {
-      square->visited_valid = false;
+    while(visited_list.visited_next != &visited_end) {
+      visited_list.visited_next->visited_erase();
     }
 
-    visited_list.visited_next = &(visited_end);
-    visited_end.visited_prev = &(visited_list);
+    /*
+    if(visited_list.visited_next != &visited_end) {
+      printf("Fatal %d\n", __LINE__); exit(1);
+    }
+    if(visited_end.visited_prev != &visited_list) {
+      printf("Fatal %d\n", __LINE__); exit(1);
+    }
+    if(visited_list.visited_prev != NULL) {
+      printf("Fatal %d\n", __LINE__); exit(1);
+    }
+    if(visited_end.visited_next != NULL) {
+      printf("Fatal %d\n", __LINE__); exit(1);
+    }
+    */
 
     ITERATE(one_point_squares, square) {
       for(s16 dy=-1; dy<=1; dy++) {
@@ -375,19 +411,38 @@ private:
     }
   }
 
-  void report_counts() {
+  void report_counts(bool force=true) {
+    if(!force) {
+      return;
+    }
     printf("\n");
     for(u32 i=2; i<=max_depth; i++) {
       printf("%d stone best: %d, checked: %lu/%lu, solution: %s\n",
           i, best_scores[i], checked_board_counts[i], total_board_counts[i],
           best_solutions[i].c_str());
     }
+
+    u32 compute_on = (u16)5 < max_depth ? 5 : max_depth;
+    //Throws an inexplicable linker error on max_depth:
+    //u32 compute_on = std::min((u16)5, max_depth); // 5 is the best we have counts for.
+    double fraction_completed =
+        (double)checked_board_counts[compute_on]/total_board_counts[compute_on];
+    double elapsed_time = now() - start_time;
+    u32 elapsed_min = elapsed_time/60;
+    u32 elapsed_sec = ((u32)elapsed_time)%60;
+    double eta = elapsed_time/fraction_completed - elapsed_time;
+    u32 eta_min = eta/60;
+    u32 eta_sec = ((u32)eta)%60;
+    printf("[%6.4f%%] in %dm%02ds. Eta: %dm%02ds\n", fraction_completed*100.0,
+        elapsed_min, elapsed_sec, eta_min, eta_sec);
+    fflush(stdout);
   }
 
 public:
   Board() :
       one_point_count(0)
   {
+    start_time = now();
     for(u32 y=0; y<board_size; y++) {
       for(u32 x=0; x<board_size; x++) {
         squares[y][x].x = x;
@@ -441,19 +496,18 @@ public:
     push(board_mid, board_mid);
     for(u16 dy=0; dy<=2; dy++) {
       for(u16 dx=0; dx<=2; dx++) {
-        if(dy>0 || dx>0) {
+        if(dx || dy) {
           push(board_mid + dx, board_mid + dy);
           _all(2);
           pop(board_mid + dx, board_mid + dy);
         }
       }
     }
-    pop(board_mid, board_mid);
-    report_counts();
+    report_counts(true);
   }
 
   //TODO: move to private:
-  void _expand(std::unordered_set<Square *> & expanded) {
+  void _expand(std::set<Square *> & expanded) {
     ITERATE(visited, square) {
       for(s16 dy=-2; dy<=2; dy++) {
         for(s16 dx=-2; dx<=2; dx++) {
@@ -465,24 +519,24 @@ public:
 
   //TODO: move to private:
   void _all(u32 depth) {
-    //Running at max_depth = 4 was 1m48s with checking and 2m18s without.
-    //Need to test it for max_depth = 5
     if(/*depth > 4 or*/ not check_and_update_walked_set()) {
+      if(depth < max_depth) {
+        //The visited list won't be used for depth < max depth, so don't
+        //go through the overhead of clearing it.
+        refresh_visited_list();
+      }
       walk();
       checked_board_counts[depth]++;
       if(depth < max_depth) {
         report_counts();
-      }
 
-      if(depth < max_depth) {
-        std::unordered_set<Square *> expanded;
+        std::set<Square *> expanded;
         _expand(expanded);
         for(Square * square : expanded) {
           if(square->val == 0) {
             push(square->x, square->y);
             _all(depth + 1);
             pop(square->x, square->y);
-            refresh_visited_list();
           }
         }
       }
@@ -492,6 +546,7 @@ public:
   void push(u16 x, u16 y) {
     Square * square = &(squares[y][x]);
     one_point_squares_list.one_point_squares_insert(square);
+    one_point_count++;
 
     square->cached_neighbor_sum = square->neighbor_sum;
 
@@ -499,32 +554,50 @@ public:
     square->neighbor_sum = 0;
 
     _push(x, y, 1);
-    one_point_count++;
   }
 
   void pop(u16 x, u16 y) {
     Square * square = &squares[y][x];
     square->one_point_squares_erase();
+    one_point_count--;
 
     square->neighbor_sum = square->cached_neighbor_sum;
 
     _pop(x, y);
-    one_point_count--;
   }
 
   void print(bool print_first_repr=true, bool print_all_reprs=false,
-             bool print_neighbor_sum_lists=false) {
-    u16 min_x, max_x, min_y, max_y;
+             bool print_neighbor_sum_lists=false, bool force=true) {
+    if(!force) {
+      return;
+    }
 
-    get_extents(min_x, min_y, max_x, max_y);
+    u16 min_x_visited, max_x_visited, min_y_visited, max_y_visited;
+    u16 min_x_active = u16_max, max_x_active = u16_min,
+        min_y_active = u16_max, max_y_active = u16_min;
+
+    get_visited_extents(
+        min_x_visited, min_y_visited, max_x_visited, max_y_visited);
+
+    for(u16 y=min_y_visited; y<=max_y_visited; y++) {
+      for(u16 x=min_x_visited; x<=max_x_visited; x++) {
+        if(squares[y][x].val) {
+          min_x_active = std::min(min_x_active, x);
+          min_y_active = std::min(min_y_active, y);
+          max_x_active = std::max(max_x_active, x);
+          max_y_active = std::max(max_y_active, y);
+        }
+      }
+    }
+
     printf("    y\\x|");
-    for(u16 x=min_x-1; x<=max_x+1; x++) {
+    for(u16 x=min_x_active-1; x<=max_x_active+1; x++) {
       printf("%7d|", x);
     }
     printf("\n");
-    for(u16 y=min_y-1; y<=max_y+1; y++) {
+    for(u16 y=min_y_active-1; y<=max_y_active+1; y++) {
       printf("%7d", y);
-      for(u16 x=min_x-1; x<=max_x+1; x++) {
+      for(u16 x=min_x_active-1; x<=max_x_active+1; x++) {
         printf("|");
         squares[y][x].print();
       }

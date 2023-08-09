@@ -2,6 +2,9 @@
 #define _UTIL_H
 #include <sys/time.h>
 
+#include <string>
+#include <vector>
+
 typedef unsigned char u8;
 typedef char s8;
 typedef unsigned short u16;
@@ -50,5 +53,6 @@ double now();
 bool progress_timer();
 void move_cursor_to(s16 x, s16 y);
 void clear_screen();
+std::vector<std::string> split(const std::string & s, char c);
 
 #endif // __UTIL_H

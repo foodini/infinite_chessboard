@@ -70,6 +70,25 @@ bool progress_timer() {
   return false;
 }
 
+std::vector<std::string> split(const std::string & s, char c) {
+  std::vector<std::string> retval;
+  const char * chr_ptr = s.c_str();
+  std::string tmp_str;
+  do {
+    if(*chr_ptr == c) {
+      retval.push_back(tmp_str);
+      tmp_str = "";
+      chr_ptr++;
+      continue;
+    }
+    if(*chr_ptr == '\0') {
+      retval.push_back(tmp_str);
+      return retval;
+    }
+    tmp_str += *chr_ptr++;
+  } while(true);
+}
+
 #ifdef __APPLE__
 #include <sys/ioctl.h>
 #include <unistd.h>
