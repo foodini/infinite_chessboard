@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 
 #include <algorithm>
 #include <list>
@@ -21,6 +22,11 @@ Stone Count | Best Score | Num Boards | Runtime
           6 |         60 |
 */
 
+/*
+TODO:
+* Skip report() when doing individual board.
+*/
+
 #define DEFINE_INSERT(list_name) \
   void list_name##_insert(Square * square) { \
     if(square->list_name##_next != NULL) return; /*DON'T RE-INSERT!!!*/ \
@@ -37,7 +43,7 @@ Stone Count | Best Score | Num Boards | Runtime
     this->list_name##_prev = this->list_name##_next = NULL; \
   }
 class Square {
-private:
+public:
   u16 x;
   u16 y;
   u16 val;
@@ -58,7 +64,6 @@ private:
   DEFINE_INSERT(visited);
   DEFINE_ERASE(visited);
 
-public:
   Square() :
       val(0),
       neighbor_sum(0),
@@ -89,9 +94,16 @@ public:
     if(val <= 1)
       printf("\033[0m");
   }
-
-  friend class Board;
 };
+
+/*
+class Completed(const std::string & filename) {
+public:
+
+private:
+  
+};
+*/
 
 #define ITERATE(list_name, iterator_name) \
   for(Square * iterator_name = list_name##_list.list_name##_next; \
@@ -107,16 +119,17 @@ private:
   static const u32 board_size = 1001; // MUST BE ODD (so refletion works)
   static const u32 board_mid = board_size/2;
   static const u32 max_neighbor_sums = 2000; //Paying memory for safety/speed.
-  static const u16 max_depth = 4;
-  static const u32 buf_len = 16*(max_depth + 1); //A generous estimate.
+  static const u16 max_depth_computable = 20; // Not enough time in the universe.
+  static const u32 buf_len = 16*(max_depth_computable + 1); //Generous estimate.
 
   Square squares[board_size][board_size];
   char packed_repr_buffs[8][buf_len];
+  std::string test_buffs[8];
   std::set<std::string> walked_boards;
-  u16 best_scores[max_depth + 1];
+  u16 best_scores[max_depth_computable + 1];
   std::vector<std::string> best_solutions;
   u64 total_board_counts[9] = {0, 0, 5, 128, 7767, 501823, 0, 0, 0};
-  u64 checked_board_counts[max_depth + 1];
+  u64 checked_board_counts[max_depth_computable + 1];
 
   // It's highly unusual to keep linked lists this way, with guards at either
   // end of the list. However, I'm shooting for a fast run here, so I want to
@@ -129,6 +142,7 @@ private:
   Square visited_list;
   Square visited_end;
 
+  u16 max_depth = 4;
   u32 one_point_count;
 
   double start_time;
@@ -204,14 +218,12 @@ private:
   }
 
   inline u32 pack(u16 x, u16 y, u16 min_x, u16 min_y) {
-    return ((y-min_y)<<16) + (x-min_x);
+    return ((y-min_y)<<8) + (x-min_x);
   }
 
   inline void unpack(u32 packed, u16 & x, u16 & y, u16 min_x, u16 min_y) {
-    y = (packed>>16) + min_y;
-    x = (packed&0xffff) + min_x;
-    printf("packed&0xffff: %d\n", packed&0xffff);
-    printf("returning x, y: %d %d\n", x, y);
+    y = (packed>>8) + min_y;
+    x = (packed&0xff) + min_x;
   }
 
   inline void u32_to_buf(
@@ -230,7 +242,7 @@ private:
   //Setting do_all to true forces the generation of all strings. The
   //values of strings1-7 are garbage if do_all==false and retval==false.
   bool check_and_update_walked_set(bool do_all=false, bool skip_update=false) {
-    u32 repr_list[8][max_depth];
+    u32 repr_list[8][max_depth_computable];
     u32 repr_list_next=0;
     u16 min_x, min_y, max_x, max_y;
 
@@ -435,12 +447,15 @@ private:
     u32 eta_sec = ((u32)eta)%60;
     printf("[%6.4f%%] in %dm%02ds. Eta: %dm%02ds\n", fraction_completed*100.0,
         elapsed_min, elapsed_sec, eta_min, eta_sec);
+    printf("fract:%0.6f t:%6.4f eta:%6.4f\n",
+           fraction_completed, elapsed_time, eta);
     fflush(stdout);
   }
 
 public:
-  Board() :
-      one_point_count(0)
+  Board(u16 max_depth_requested) :
+      one_point_count(0),
+      max_depth(max_depth_requested)
   {
     start_time = now();
     for(u32 y=0; y<board_size; y++) {
@@ -449,9 +464,10 @@ public:
         squares[y][x].y = y;
       }
     }
-    std::fill(best_scores, best_scores + max_depth + 1, 0);
-    std::fill(checked_board_counts, checked_board_counts + max_depth + 1, 0);
-    best_solutions.reserve(max_depth+1);
+    std::fill(best_scores, best_scores + max_depth_computable + 1, 0);
+    std::fill(checked_board_counts,
+              checked_board_counts + max_depth_computable + 1, 0);
+    best_solutions.reserve(max_depth_computable+1);
 
     one_point_squares_list.one_point_squares_next = &one_point_squares_end;
     one_point_squares_end.one_point_squares_prev = &one_point_squares_list;
@@ -463,10 +479,14 @@ public:
       neighbor_sums_list[i].neighbor_sums_next = &(neighbor_sums_ends[i]);
       neighbor_sums_ends[i].neighbor_sums_prev = &(neighbor_sums_list[i]);
     }
+
+    for(int i=0; i<8; i++) {
+      test_buffs[i] = std::string(buf_len, '\0');
+    }
   }
 
-  Board(const std::string & state) :
-      Board()
+  Board(u16 max_depth_requested, const std::string & state) :
+      Board(max_depth_requested)
   {
     u16 width, height;
     std::vector<std::string> fields = split(state, '|');
@@ -483,8 +503,8 @@ public:
     }
   }
 
-  Board(const char * state) :
-      Board(std::string(state))
+  Board(u16 max_depth_requested, const char * state) :
+      Board(max_depth_requested, std::string(state))
   {
   }
 
@@ -643,29 +663,43 @@ private:
     fflush(stderr);
     printf("usage: infchess max_depth -c -a=remote_addr -p=port_number|\n");
     printf("       infchess max_depth -s -p=port_number\n");
-    printf("       infchess max_depth\n\n");
+    printf("       infchess max_depth\n");
+    printf("       infchess max_depth -b=board_string\n\n");
     printf("The first form creates a worker client and connects to the\n");
     printf("server at the remote_addr and port_numer given\n\n");
     printf("The second form creates an orchestrator process to which\n");
-    printf("the clients will connect.\n");
-    printf("The final form creates a local-only process\n");
+    printf("the clients will connect.\n\n");
+    printf("The third form creates a local-only process\n\n");
+    printf("The final form takes a packed board string of the following\n");
+    printf("form, where all values are hex. yx values are 8 bits of y,\n");
+    printf("then 8 bits of x:\n\n");
+    printf("\tWIDTHxHEIGHT|yx|yx|yx...\n\n");
+    printf("For example, the best 2, 3, 4, and 5-stone boards are;\n");
+    printf("\t2: 3x3|0|202                    16 points\n");
+    printf("\t3: 5x6|0|402|504                28 points\n");
+    printf("\t4: 7x5|3|300|306|402            38 points\n");
+    printf("\t5: ax7|9|203|407|509|600        49 points\n");
     exit(exit_val);
   }
 public:
+  //TODO: Allow the processing of a single board from the command line, either
+  //      via the packed_repr format, or a simple set of points.
   ArgParse(s32 argc, char * argv[]) :
-      m_client(false),
-      m_server(false),
-      m_standalone(true),
-      m_port(0),
-      m_max_depth(0),
-      m_remote_address(NULL)
+      client(false),
+      server(false),
+      standalone(false),
+      single_board(false),
+      port(0),
+      max_depth(0),
+      remote_address(NULL),
+      board_str(NULL)
   {
     if(argc < 2) {
       usage(1);
     }
 
-    m_max_depth = atoi(argv[1]);
-    if(m_max_depth == 0) {
+    max_depth = atoi(argv[1]);
+    if(max_depth == 0) {
       fprintf(stderr, "Unable to parse max_depth\n");
       usage(1);
     }
@@ -679,70 +713,85 @@ public:
           usage(0);
           break;
         case 's':
-          if(m_client) {
-            fprintf(stderr, "-s and -c are mutually exclusive\n");
+          if(client || single_board) {
+            fprintf(stderr, "-s, -c, and -b are mutually exclusive\n");
             usage(1);
           }
-          m_server = true;
-          m_standalone = false;
+          server = true;
           break;
         case 'c':
-          if(m_server) {
-            fprintf(stderr, "-s and -c are mutually exclusive\n");
+          if(server || single_board) {
+            fprintf(stderr, "-s, -c, and -b are mutually exclusive\n");
             usage(1);
           }
-          m_client = true;
-          m_standalone = false;
+          client = true;
           break;
         case 'a':
           if(argv[i][2] != '=') {
+            fprintf(stderr, "-a syntax: -a=ADDRESS\n");
             usage(1);
           }
-          m_remote_address = &argv[i][3];
+          remote_address = &argv[i][3];
           break;
         case 'p':
           if(argv[i][2] != '=') {
             usage(1);
           }
-          m_port=atoi(&argv[i][3]);
+          port=atoi(&argv[i][3]);
+          break;
+        case 'b':
+          if(server || client || standalone) {
+            fprintf(stderr, "-s, -c, and -b are mutually exclusive\n");
+            usage(1);
+          }
+          if(argv[i][2] != '=') {
+            fprintf(stderr, "-b syntax: -a=PACKED_BOARD_FORMAT\n");
+            usage(1);
+          }
+          single_board = true;
+          board_str=&argv[i][3];
           break;
       }
     }
 
-    if((m_server || m_client) && m_port == 0) {
+    if(!client && !server && !single_board) {
+      standalone = true;
+    }
+
+    if((server || client) && port == 0) {
       fprintf(stderr, "Port num required when starting a client or server.\n");
       usage(1);
     }
 
-    if(m_client && m_remote_address == NULL) {
+    if(client && remote_address == NULL) {
       fprintf(stderr, "Remote IP is required when starting a client.\n");
       usage(1);
     }
   }
 
-  bool m_client;
-  bool m_server;
-  bool m_standalone;
+  bool client;
+  bool server;
+  bool standalone;
+  bool single_board;
 
-  u16 m_max_depth;
+  u16 max_depth;
 
-  u16 m_port;
-  char * m_remote_address;
+  u16 port;
+  char * remote_address;
+  char * board_str;
 };
 
 int main(s32 argc, char * argv[]) {
-  Board * board = new Board();
-
+  Board * board;
   ArgParse args(argc, argv);
-  exit(0);
-  /*
-  board->push(100,102);
-  board->push(104,100);
-  board->push(106,102);
-  board->walk();
-  exit(0);
-  */
-
-  board->all();
+  if(args.standalone) {
+    board = new Board(args.max_depth);
+    board->all();
+  } else if (args.single_board) {
+    board = new Board(args.max_depth, args.board_str);
+    board->walk();
+  } else if (args.server) {
+  } else if (args.client) {
+  }
   exit(0);
 }
