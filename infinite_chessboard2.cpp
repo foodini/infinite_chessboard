@@ -124,7 +124,6 @@ private:
 
   Square squares[board_size][board_size];
   char packed_repr_buffs[8][buf_len];
-  std::string test_buffs[8];
   std::set<std::string> walked_boards;
   u16 best_scores[max_depth_computable + 1];
   std::vector<std::string> best_solutions;
@@ -423,6 +422,16 @@ private:
     }
   }
 
+  void get_hours_minutes_seconds(double time,
+                                 u32 & hours, u32 & minutes, u32 & seconds) {
+    u32 s = time;
+    seconds = s % 60;
+    s /= 60;
+    minutes = s % 60;
+    s /= 60;
+    hours = s;
+  }
+
   void report_counts(bool force=true) {
     if(!force) {
       return;
@@ -440,13 +449,19 @@ private:
     double fraction_completed =
         (double)checked_board_counts[compute_on]/total_board_counts[compute_on];
     double elapsed_time = now() - start_time;
-    u32 elapsed_min = elapsed_time/60;
-    u32 elapsed_sec = ((u32)elapsed_time)%60;
+    u32 elapsed_hours;
+    u32 elapsed_mins;
+    u32 elapsed_secs;
+    get_hours_minutes_seconds(
+        elapsed_time, elapsed_hours, elapsed_mins, elapsed_secs);
     double eta = elapsed_time/fraction_completed - elapsed_time;
-    u32 eta_min = eta/60;
-    u32 eta_sec = ((u32)eta)%60;
-    printf("[%6.4f%%] in %dm%02ds. Eta: %dm%02ds\n", fraction_completed*100.0,
-        elapsed_min, elapsed_sec, eta_min, eta_sec);
+    u32 eta_hours;
+    u32 eta_mins;
+    u32 eta_secs;
+    get_hours_minutes_seconds(eta, eta_hours, eta_mins, eta_secs);
+    printf("[%6.4f%%] in %dh%02dm%02ds. Eta: %dh%02dm%02ds\n",
+           fraction_completed*100.0, elapsed_hours, elapsed_mins, elapsed_secs,
+           eta_hours, eta_mins, eta_secs);
     printf("fract:%0.6f t:%6.4f eta:%6.4f\n",
            fraction_completed, elapsed_time, eta);
     fflush(stdout);
@@ -478,10 +493,6 @@ public:
     for(u32 i=0; i<max_neighbor_sums; i++) {
       neighbor_sums_list[i].neighbor_sums_next = &(neighbor_sums_ends[i]);
       neighbor_sums_ends[i].neighbor_sums_prev = &(neighbor_sums_list[i]);
-    }
-
-    for(int i=0; i<8; i++) {
-      test_buffs[i] = std::string(buf_len, '\0');
     }
   }
 
@@ -792,6 +803,7 @@ int main(s32 argc, char * argv[]) {
     board->walk();
   } else if (args.server) {
   } else if (args.client) {
+    //Client(args.remote_address, args.port);
   }
   exit(0);
 }
