@@ -14,12 +14,19 @@ TODO:
 * unordered_sets should be faster than sets, but a test on walking a single
   four-square Board showed otherwise. It would be worth trying again when there
   are larger boards & deeper traverses going on.
+* in _all, we call walk(). walk() should return a bool that indicates whether
+  it terminated early due to a symmetry. If this is the case, _all dosen't need
+  to call itself - doing so would generate a walk() attempt for every one of the
+  symmetric board's subboards - which would each be rejected due to symmetry.
+* Make sure that validate() checks the neighbor_sums map. It should exactly
+  match current board state.
+* Can we move to the cached_neighbor_sum?
 */
 
 #define MARK do{printf("%d\n", __LINE__); fflush(stdout);} while(0)
 
-const int BOARD_SIZE = 1000;
-const int BOARD_MID = BOARD_SIZE/2;
+const u32 BOARD_SIZE = 600;
+const u32 BOARD_MID = BOARD_SIZE/2;
 
 using namespace std;
 
@@ -30,7 +37,7 @@ public:
     y = other.y;
     update_hash_cache();
   }
-  Pos(int x_arg, int y_arg) {
+  Pos(u32 x_arg, u32 y_arg) {
     x = x_arg;
     y = y_arg;
     update_hash_cache();
@@ -97,8 +104,9 @@ namespace std {
 
 class Square {
 public:
-  int val;
-  int neighbor_sum;
+  u32 val;
+  u32 neighbor_sum;
+  u32 cached_neighbor_sum;
 
   Square() {
     val = 0;
@@ -135,6 +143,12 @@ public:
   Board() {
     one_point_count = 0;
     fill(best_scores, best_scores+10, 0);
+    fill(board_counts, board_counts+10, 0);
+
+    fill(number_of_boards, number_of_boards+10, 0);
+    number_of_boards[2] = 24;
+    number_of_boards[3] = 903;
+    number_of_boards[4] = 38288;
 
     dxdy[0] = Pos(-1, -1);
     dxdy[1] = Pos(-1,  0);
@@ -164,7 +178,7 @@ public:
 
   void walk() {
     if(already_walked()) {
-      printf("He's already got one!\n");
+      //printf("He's already got one!\n");
       return;
     }
 
@@ -174,10 +188,8 @@ public:
   }
 
   void get_bounds(u16 & min_x, u16 & min_y, u16 & max_x, u16 & max_y) {
-    min_x = u16_max;
-    max_x = u16_min;
-    min_y = u16_max;
-    max_y = u16_min;
+    min_x = u16_max; max_x = u16_min;
+    min_y = u16_max; max_y = u16_min;
     for(auto sets_iter : neighbor_sums) {
       for(auto pos_iter : sets_iter.second) {
         min_x = min(min_x, pos_iter.get_x());
@@ -187,6 +199,37 @@ public:
       }
     }
   }
+
+  bool validate() {
+    u16 min_x; u16 max_x;
+    u16 min_y; u16 max_y;
+
+    get_bounds(min_x, min_y, max_x, max_y);
+
+    for(u32 y=min_y; y<=max_y; y++) {
+      for(u32 x=min_x; x<=max_x; x++) {
+        //printf("v: <%d, %d>\n", x, y);
+        u32 sum = 0;
+        u16 val = squares[y][x].val;
+        for(s32 dy=-1; dy<=1; dy++) {
+          for(s32 dx=-1; dx<=1; dx++) {
+            if(dx==0 and dy == 0) {
+              continue;
+            }
+            if(val == 0 or squares[y+dy][x+dx].val < val) {
+              sum += squares[y+dy][x+dx].val;
+            }
+          }
+        }
+        //printf("sum: %d, neighbor_sum: %d\n", sum, squares[y][x].neighbor_sum);
+        if(sum != squares[y][x].neighbor_sum) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
 
   void expand(unordered_set<Pos> & expanded, const unordered_set<Pos> & visited) {
     for(auto pos_iter : visited) {
@@ -199,7 +242,6 @@ public:
   }
 
   void _all(u32 depth) {
-    printf("_all called with depth = %d (%d max)\n", depth, max_depth);
     unordered_set<Pos> to_traverse;
     expand(to_traverse, visited_pos_set);
 
@@ -207,9 +249,14 @@ public:
       visited_pos_set.clear();
       if(get_square(pos_iter).val != 1) {
         push(pos_iter);
+        board_counts[depth]++;
         walk();
         if(depth < max_depth) {
-          printf("Calling _all with depth = %d (%d max). Comp result: %d\n", depth + 1, max_depth, depth < max_depth); 
+          printf("Calling _all with depth = %d (%d max).\n", depth + 1, max_depth); 
+          for(u32 i=2; i<=max_depth; i++) {
+            printf("  %d-stone boards processed: %d/%d\n", i, board_counts[i], number_of_boards[i]);
+          }
+          fflush(stdout);
           _all(depth + 1);
         }
         pop(pos_iter);
@@ -222,6 +269,12 @@ public:
     push(center);
     max_depth = 3;
     _all(2);
+
+    printf("Stats for each stone count:\n");
+    for(u32 i=1; i<=max_depth; i++) {
+      printf("%d: best score: %d.  Board count: %d/%d\n", i, best_scores[i],
+             board_counts[i], number_of_boards[i]);
+    }
   }
 
   void print() {
@@ -230,28 +283,31 @@ public:
     u16 min_y;
     u16 max_y;
 
+    printf("OPP: %ld OPP count: %d, ID: %s\n", one_point_positions.size(),
+           one_point_count, compact_repr().c_str());
+
     get_bounds(min_x, min_y, max_x, max_y);
 
-    for(int y = min_y; y <= max_y; y++) {
-      for(int x = min_x; x <= max_x; x++) {
+    for(u32 y = min_y; y <= max_y; y++) {
+      for(u32 x = min_x; x <= max_x; x++) {
         Pos xy = Pos(x, y);
         printf("|");
         get_square(xy).print();
       }
       printf("|\n");
     }
-    int min_sum = 999999999;
-    int max_sum = -min_sum;
-    for(unordered_map<int, set<Pos> >::iterator i=neighbor_sums.begin();
+    u32 min_sum = u32_max;
+    u32 max_sum = u32_min;
+    for(unordered_map<u32, set<Pos> >::iterator i=neighbor_sums.begin();
         i!=neighbor_sums.end(); i++) {
       if(i->first < min_sum)
         min_sum = i->first;
       if(i->first > max_sum)
         max_sum = i->first;
     }
-    for(int i=min_sum; i<=max_sum; i++) {
-      if(neighbor_sums[i].size() == 0) {
-        continue;
+    for(u32 i=min_sum; i<=max_sum; i++) {
+      if(neighbor_sums[i].size() > 0) {
+        //printf("%d: <set tbi>", i);
       }
     }
   }
@@ -265,20 +321,27 @@ private:
   Square squares[BOARD_SIZE][BOARD_SIZE];
   unordered_set<Pos> visited_pos_set;
   unordered_set<string> walked_boards;
-  unordered_map<int, set<Pos> > neighbor_sums;
+  unordered_map<u32, set<Pos> > neighbor_sums;
   set<Pos> one_point_positions;
   u32 one_point_count;
   u32 best_scores[10];
+  u32 board_counts[10];
+  u32 number_of_boards[10];
   u32 max_depth;
 
-  void _push(const Pos & pos, int val) {
+  void _push(const Pos & pos, u32 val) {
     visited_pos_set.insert(pos);
-    get_square(pos).val = val;
-    for(int i=0; i<8; i++) {
+    Square & square = get_square(pos);
+    square.val = val;
+    if(val == 1) {
+      neighbor_sums[square.neighbor_sum].erase(pos);
+      square.neighbor_sum = 0;
+    }
+    for(u32 i=0; i<8; i++) {
       Pos neighbor = pos + dxdy[i];
       if(get_square(neighbor).val == 0) {
-        int oldsum = get_square(neighbor).neighbor_sum;
-        int newsum = oldsum + val;
+        u32 oldsum = get_square(neighbor).neighbor_sum;
+        u32 newsum = oldsum + val;
         get_square(neighbor).neighbor_sum = newsum;
         if(oldsum > 0) {
           neighbor_sums[oldsum].erase(neighbor);
@@ -289,15 +352,24 @@ private:
   }
 
   void _pop(const Pos & pos) {
-    Square & pos_square = get_square(pos);
-    int val = pos_square.val;
-    pos_square.val = 0;
-    for(int i = 0; i < 8; i++) {
+    Square & square = get_square(pos);
+    u32 val = square.val;
+    if(val == 1) {
+      u32 sum = 0;
+      for(u32 i=0; i<8; i++) {
+        Pos neighbor = pos + dxdy[i];
+        sum += squares[neighbor.get_y()][neighbor.get_x()].val;
+      }
+      squares[pos.get_y()][pos.get_x()].neighbor_sum = sum;
+
+    }
+    square.val = 0;
+    for(u32 i=0; i<8; i++) {
       Pos neighbor = pos + dxdy[i];
       Square & neighbor_square = get_square(neighbor);
       if(neighbor_square.val == 0) {
-        int oldval = neighbor_square.neighbor_sum;
-        int newval = oldval - val;
+        u32 oldval = neighbor_square.neighbor_sum;
+        u32 newval = oldval - val;
         neighbor_square.neighbor_sum = newval;
         neighbor_sums[oldval].erase(neighbor);
         if(newval > 0) {
@@ -307,7 +379,7 @@ private:
     }
   }
 
-  void _walk(int val) {
+  void _walk(u32 val) {
     // If there's anything that is really going to improve the performance
     // of the walk, it's this. Making this copy is terrible. I should implement
     // my own set that allows you to iterate over a thing that changes while
@@ -317,11 +389,20 @@ private:
       positions.push_back(iter);
     }
 
+    /*
+    if(!validate()) {
+      printf("VALIDATION FAILURE!!!\n");
+      print();
+      printf("^^^^^^^^^^^^^^^^^^^^^\n");
+    }
+    */
+
     for(const Pos & iter : positions) {
       _push(iter, val);
       if(val > best_scores[one_point_count]) {
         best_scores[one_point_count] = val;
-        printf("New best (%d stones): %d\n", one_point_count, val);
+        printf("New best (%d stones): %d  %s\n", one_point_count, val,
+               compact_repr().c_str());
         print();
         printf("\n");
       }
@@ -417,17 +498,15 @@ private:
 int main() {
   Board board;
 
-  //board.all();
-  MARK;
-  board.push(Pos(BOARD_MID + 4,BOARD_MID + 0));
-  MARK;
-  board.push(Pos(BOARD_MID + 0,BOARD_MID + 3));
-  MARK;
-  board.push(Pos(BOARD_MID + 6,BOARD_MID + 2));
-  MARK;
-  board.push(Pos(BOARD_MID + 8,BOARD_MID + 5));
-  MARK;
+  if(false) {
+    board.all();
+    exit(0);
+  }
+
+  board.push(Pos(BOARD_MID + 0,BOARD_MID + 0));
+  board.push(Pos(BOARD_MID + 4,BOARD_MID + 2));
+  board.push(Pos(BOARD_MID + 6,BOARD_MID + 4));
+  board.push(Pos(BOARD_MID + 9,BOARD_MID + 2));
   board.walk();
-  MARK;
   board.print();
 }
